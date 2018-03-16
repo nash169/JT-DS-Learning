@@ -1,4 +1,4 @@
-function fig = PlayTraj(robot, dt, robot_fig)
+function fig = PlayTraj(robot, type_traj, robot_fig)
 % Visualizes a robot's trajectory, displaying a series of robot joint positions and their corresponding
 % times. If clicked before completion, will restart the playback.
 
@@ -16,18 +16,31 @@ function fig = PlayTraj(robot, dt, robot_fig)
 % fig - the figure in which the simulation was displated
 % h - the axes on which the trace was plotted.
     
-    if nargin < 4 % if axes unspecified
+    if nargin < 3 % if axes unspecified
         fig = ShowRobot(robot);
     else
         fig = figure(robot_fig);
     end
     
     fields = fieldnames(robot);
+    n_components = length(fields);
     
-    for i = 1:length(fields)
+    switch type_traj
+        case 'demonstration'
+            slot = 2;
+        case 'learned'
+            slot = 5;
+        otherwise
+            error('error');
+    end
+    
+    for i = 1:n_components
         traj{i} = [];
-        for j = 2:size(robot,2)
-            traj{i} =  [traj{i} robot(j).(fields{i})];
+        n_traj = length(robot(slot).(fields{i}));
+        for j = 1:n_traj
+            curr_traj = robot(slot).(fields{i}){j};
+            curr_traj(end,:) = [diff(curr_traj(end,:)) 0];
+            traj{i} = [traj{i} curr_traj];
         end
     end
     
@@ -46,10 +59,10 @@ function fig = PlayTraj(robot, dt, robot_fig)
     
     for i = 1:nT
         for j = 1:length(fields)
-            robot(1).(fields{j}).robot.plot(transpose(traj{j}(:,i)));
-            x = robot(1).(fields{j}).forward_kinematics(traj{j}(:,i));
+            robot(1).(fields{j}).robot.plot(transpose(traj{j}(1:end-1,i)));
+            x = robot(1).(fields{j}).forward_kinematics(traj{j}(1:end-1,i));
             plot3(x(1), x(2), x(3), sprintf('.%s', 'r'));
-            robot(1).(fields{j}).robot.delay = dt;
+            robot(1).(fields{j}).robot.delay = traj{j}(end,i);
         end
     end
 end
