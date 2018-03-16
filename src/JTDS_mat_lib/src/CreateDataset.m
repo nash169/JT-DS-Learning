@@ -1,4 +1,4 @@
-function robot = CreateDataset(robot, n_examples, dt, tol_cutting)
+function robot = CreateDataset(robot, n_examples, tol_cutting)
 % This function preprocesses raw joint demonstration data and molds it into
 % a suitable format.
 % The function computes the first time derivative of demonstrations and
@@ -60,29 +60,27 @@ function robot = CreateDataset(robot, n_examples, dt, tol_cutting)
 
 
 fields = fieldnames(robot);
-
-[n,m] = size(robot(2).(fields{1}));
-
-z = size(robot,2);
+n_components = length(fields);
 
 % Generate random perturbations of these two base trajectories - increase
 % the number of data for learning algorithm
-for i = 1:length(fields)
-    Data = [];
-    for k = 1:n_examples
-%         base = robot(j).(fields{i});
-%         robot(j).(fields{i}) = zeros(n, m, n_examples);
-        for j = 2:z
-            q = robot(j).(fields{i}) + pi/30*(rand(n, m)-.5);
+for i = 1:n_components
+    n_traj = length(robot(2).(fields{i}));
+    for j = 1:n_traj
+        Data = [];
+        [n, m] = size(robot(2).(fields{i}){j});
+        dt = robot(2).(fields{i}){j}(end,2) - robot(2).(fields{i}){j}(end,1);
+        for k = 1:n_examples
+            q = robot(2).(fields{i}){j}(1:end-1,:) + pi/30*(rand(n-1, m)-.5);
             q_d = diff(q,1,2)/dt;
             ind = find(sqrt(sum(q_d.*q_d,1))>tol_cutting);
             q = q(:,min(ind):max(ind)+1);
-            q_d = [q_d(:,min(ind):max(ind)) zeros(n,1)];
+            q_d = [q_d(:,min(ind):max(ind)) zeros(n-1,1)];
             xT = repmat(robot(1).(fields{i}).forward_kinematics(q(:,end)), 1, m);
             Data = [Data [q; q_d; xT]];
         end
+        robot(3).(fields{i}){j} = Data;
     end
-    robot(z+1).(fields{i}) = Data;
 end
 
 end
