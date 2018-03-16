@@ -42,37 +42,39 @@ robotVisualize = ShowRobot(robot);
 angles = GetJointAngles([0.4, 0], [-.4,-.4], A, 0);
 
 % Plot obstacles and target
-plot([0.3, 0.5], [0.2, 0.2], '-')
-plot([0.3, 0.5], [-0.2, -0.2], '-')
+plot([0.4, 0.6], [0.2, 0.2], '-')
+plot([0.4, 0.6], [-0.2, -0.2], '-')
 plot(0.4,0, 'o')
 
-% Demonstrated trajectories sample rate - 1 second simulation
-f = 200;
+% Sample frenquency & time step
+f = 200; 
 dt = 1/f;
-t = 0 : dt : 1;
 
 % Forward swing trajectory of the footstep in joint space
-robot(2).arm1 = [CreateTraj(0, -pi/3, 50, -pi/3, angles(1), 50);
+traj1 = [CreateTraj(0, -pi/3, 50, -pi/3, angles(1), 50);
                  CreateTraj(0, pi/2 + .6, 50, pi/2 + .6, angles(2), 50);
                  CreateTraj(0, pi/4, 50, pi/4, angles(3), 50)];
-                 
-robot(3).arm1 = [CreateTraj(angles(1), -pi/3, 50, -pi/3, 0, 50);
-                 CreateTraj(angles(2), pi/2 + .6, 50, pi/2 + .6, 0, 50);
-                 CreateTraj(angles(3),pi/4, 50, pi/4, 0, 50)];
+robot(2).arm1{1} = [traj1; 0:dt:(size(traj1,2)-1)*dt];
+robot(2).arm2{1} = [-traj1; 0:dt:(size(traj1,2)-1)*dt];
 
-robot(2).arm2 = -robot(2).arm1;
-robot(3).arm2 = -robot(3).arm1;
+% Backward swing trajectory of the footstep in joint space             
+% traj2 = [CreateTraj(angles(1), -pi/3, 50, -pi/3, 0, 50);
+%                  CreateTraj(angles(2), pi/2 + .6, 50, pi/2 + .6, 0, 50);
+%                  CreateTraj(angles(3),pi/4, 50, pi/4, 0, 50)];
+% robot(2).arm1{2} = [traj2; 0:dt:(size(traj2,2)-1)*dt];
+% robot(2).arm2{2} = [-traj2; 0:dt:(size(traj2,2)-1)*dt];
 
 % Check generated trajectory
-% robotVisualize = PlayTraj(robot, dt, robotVisualize);
+robotVisualize = PlayTraj(robot, 'demonstration', robotVisualize);
 
 tol_cutting = .1;
-robot = CreateDataset(robot, 10, dt, tol_cutting);
+robot = CreateDataset(robot, 10, tol_cutting);
+[Data, index] = preprocess_demos_jtds(robotplant, demos, time, tol_cutting);
 
 %% Model Learning
 
 % Options for the JT-DS learner.
-options.latent_mapping_type = 'PCA';
+options.latent_mapping_type = 'KPCA';
 options.autoencoder_num_dims = 2;
 options.GMM_sigma_type = 'full'; % Can be either 'full' or 'diagonal'
 options.explained_variance_threshold = .98; % How much of original data should be explained by latent-space projection
@@ -83,26 +85,26 @@ options.BIC_regularization = 2.5; % this should probably be between 1 and 3 - th
 options.verbose = true;
 options.learn_with_bounds = true; % If false, does not incorporates joint limits in learning
 
-% Parameters model learning
-[Priors, Mu, Sigma, As, latent_mapping] = JTDS_Solver(Data,robotplant,options);
+% Parameters model learning Arm 1
+sprintf('Learning parameters for arm %d',1)
+load Data.mat;
+[Priors, Mu, Sigma, As, latent_mapping] = JTDS_Solver_v2(Data,robot(1).arm1,options);
+robot(4).arm1 = MotionGeneratorBounded(robot(1).arm1, Mu, Sigma, Priors, As, latent_mapping);
+
+% Parameters model learning Arm 2
+% sprintf('Learning parameters for arm %d',2)
+% [Priors, Mu, Sigma, As, latent_mapping] = JTDS_Solver(robot(3).arm2{1},robot(1).arm2,options);
+% robot(4).arm2 = MotionGeneratorBounded(robot(1).arm2, Mu, Sigma, Priors, As, latent_mapping);
 
 %% Simulate learned trajectory
 
-% Controller creation
-motion_generator_learned = MotionGeneratorBounded(robotplant, Mu, Sigma, Priors, As, latent_mapping);
-
-% Controller creation without the learned parameters
-[~, identity_mapping] = compute_mapping(eye(dimq), 'None'); % Check this
-motion_generator_unlearned = MotionGeneratorBounded(robotplant, zeros(dimq, 1), eye(dimq), 1, eye(dimq), identity_mapping);
-
 % Initial Joint space state
-q_initial = [-pi/2-.5; -0.2; pi/2];
+q_initial = [0; 0; 0];
 
 % Task positions in target space
-x_targets = [.4; -.2; 0];
+x_targets = [.4; 0; 0];
 
-% How long to interpolate the trajectory - check this (not clear). Reading
-% further... it's a time
+% How long to interpolate the trajectory
 max_trajectory_duration = 60;
 
 % Maximum distance from the goal
@@ -111,25 +113,24 @@ goal_tolerance = 0.05;
 % Interpolate the trajectories till the goal's tolerance is reached unless
 % the maximum interpolation time exceeds. This is done both for the learned
 % and unlearned model.
-[Q_traj_learned, T_traj_learned] = computeFullTrajectory(q_initial, x_targets,...
-    motion_generator_learned, goal_tolerance, max_trajectory_duration);
-[Q_traj_unlearned, T_traj_unlearned] = computeFullTrajectory(q_initial, x_targets,...
-    motion_generator_unlearned, goal_tolerance, max_trajectory_duration);
 
-% Compute the Root Mean Square Error - on what? (check this)
-rmse_learned = mean(trajectory_error(motion_generator_learned, Data(1:3, :), Data(4:6, :), Data(7:9, :)));
-rmse_unlearned = mean(trajectory_error(motion_generator_unlearned, Data(1:3, :), Data(4:6, :), Data(7:9, :)));
+% sprintf('Generating trajectory for arm %d',1)
+[Q_traj_learned, T_traj_learned] = computeFullTrajectory(q_initial, x_targets,...
+    robot(4).arm1, goal_tolerance, max_trajectory_duration);
+robot(5).arm1{1} = [Q_traj_learned; T_traj_learned];
+
+% sprintf('Generating trajectory for arm %d',2)
+% [Q_traj_learned, T_traj_learned] = computeFullTrajectory(q_initial, x_targets,...
+%     robot(4).arm2, goal_tolerance, max_trajectory_duration);
+% robot(5).arm2{1} = [Q_traj_learned; T_traj_learned];
+
+% Compute the Root Mean Square Error
+% rmse_learned = mean(trajectory_error(motion_generator_learned, robot(3).arm1{1}(1:3, :), robot(3).arm1{1}(4:6, :), robot(3).arm1{1}(7:9, :)));
 
 %% Visualizing
-
-% Recall the figure object visualizing the robot
-if ~ishandle(fig)
-    fig = initialize_robot_figure(robot);
-else
-    figure(fig);
-end
-
-% Plot trajectory and robot motion
-plot3(x_targets(1,:),x_targets(2,:),x_targets(3,:), 'ro', 'markersize', 20);
-PlaybackTrajectory(robotplant, Q_traj_learned, T_traj_learned, fig);
-
+test(1).arm1 = robot(1).arm1;
+test(2).arm1 = robot(2).arm1;
+test(3).arm1 = robot(3).arm1;
+test(4).arm1 = robot(4).arm1;
+test(5).arm1 = robot(5).arm1;
+robotVisualize = PlayTraj(test, 'learned', robotVisualize);
